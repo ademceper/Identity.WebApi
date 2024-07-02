@@ -1,12 +1,17 @@
-﻿using Identity.WebApi.Models;
-using System;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
-using AutoMapper;
+using Identity.WebApi.Models;
 using Identity.WebApi.Helpers;
 using Identity.WebApi.Context;
 using Microsoft.EntityFrameworkCore;
+using AutoMapper;
+using Microsoft.Extensions.Configuration;
 
 namespace Identity.WebApi.Services
 {
@@ -18,17 +23,9 @@ namespace Identity.WebApi.Services
 		private readonly IJwtHelper _jwtHelper;
 		private readonly IEmailService _emailService;
 		private readonly AppDbContext _context;
+		private readonly IConfiguration _configuration;
 
-		/// <summary>
-		/// Initializes a new instance of the <see cref="AuthService"/> class.
-		/// </summary>
-		/// <param name="userManager">User manager service.</param>
-		/// <param name="signInManager">Sign-in manager service.</param>
-		/// <param name="mapper">Mapper service.</param>
-		/// <param name="jwtHelper">JWT helper service.</param>
-		/// <param name="emailService">Email service.</param>
-		/// <param name="context">Database context.</param>
-		public AuthService(UserManager<AppUser> userManager, SignInManager<AppUser> signInManager, IMapper mapper, IJwtHelper jwtHelper, IEmailService emailService, AppDbContext context)
+		public AuthService(UserManager<AppUser> userManager, SignInManager<AppUser> signInManager, IMapper mapper, IJwtHelper jwtHelper, IEmailService emailService, AppDbContext context, IConfiguration configuration)
 		{
 			_userManager = userManager;
 			_signInManager = signInManager;
@@ -36,14 +33,9 @@ namespace Identity.WebApi.Services
 			_jwtHelper = jwtHelper;
 			_emailService = emailService;
 			_context = context;
+			_configuration = configuration;
 		}
 
-		/// <summary>
-		/// Registers a new user.
-		/// </summary>
-		/// <param name="registerDto">The registration DTO containing user details.</param>
-		/// <param name="cancellationToken">Cancellation token.</param>
-		/// <returns>IdentityResult representing the result of the registration process.</returns>
 		public async Task<IdentityResult> RegisterAsync(RegisterDto registerDto, CancellationToken cancellationToken)
 		{
 			if (registerDto.Password != registerDto.ConfirmPassword)
@@ -70,12 +62,6 @@ namespace Identity.WebApi.Services
 			return result;
 		}
 
-		/// <summary>
-		/// Logs in a user.
-		/// </summary>
-		/// <param name="loginDto">The login DTO containing user credentials.</param>
-		/// <param name="cancellationToken">Cancellation token.</param>
-		/// <returns>LoginResponseDto containing the user details and JWT token.</returns>
 		public async Task<LoginResponseDto> LoginAsync(LoginDto loginDto, CancellationToken cancellationToken)
 		{
 			var user = await _userManager.FindByNameAsync(loginDto.Username);
@@ -84,7 +70,12 @@ namespace Identity.WebApi.Services
 				return null;
 			}
 
-			var result = await _signInManager.PasswordSignInAsync(user.UserName, loginDto.Password, isPersistent: false, lockoutOnFailure: false);
+			if (await _userManager.IsLockedOutAsync(user))
+			{
+				throw new InvalidOperationException("User account is locked.");
+			}
+
+			var result = await _signInManager.PasswordSignInAsync(user.UserName, loginDto.Password, isPersistent: false, lockoutOnFailure: true);
 			if (!result.Succeeded)
 			{
 				return null;
@@ -96,6 +87,158 @@ namespace Identity.WebApi.Services
 			response.Token = token;
 
 			return response;
+		}
+
+		public async Task<IdentityResult> ChangePasswordAsync(string userId, ChangePasswordDto changePasswordDto, CancellationToken cancellationToken)
+		{
+			if (changePasswordDto.NewPassword != changePasswordDto.ConfirmNewPassword)
+			{
+				return IdentityResult.Failed(new IdentityError { Description = "New passwords do not match." });
+			}
+
+			var user = await _userManager.FindByIdAsync(userId);
+			if (user == null)
+			{
+				return IdentityResult.Failed(new IdentityError { Description = "User not found." });
+			}
+
+			var result = await _userManager.ChangePasswordAsync(user, changePasswordDto.CurrentPassword, changePasswordDto.NewPassword);
+
+			if (result.Succeeded)
+			{
+				user.PasswordLastChanged = DateTime.UtcNow;
+				await _userManager.UpdateAsync(user);
+			}
+
+			return result;
+		}
+
+		public async Task<IdentityResult> ForgotPasswordAsync(ForgotPasswordRequestDto forgotPasswordRequestDto, CancellationToken cancellationToken)
+		{
+			var user = await _userManager.FindByEmailAsync(forgotPasswordRequestDto.Email);
+			if (user == null)
+			{
+				return IdentityResult.Failed(new IdentityError { Description = "User not found." });
+			}
+
+			var code = GenerateVerificationCode();
+			var expiryTime = DateTime.UtcNow.AddMinutes(3);
+			var passwordResetCode = new PasswordResetCode
+			{
+				Email = forgotPasswordRequestDto.Email,
+				Code = code,
+				CreatedAt = DateTime.UtcNow,
+				ExpiryTime = expiryTime // Kodun geçerlilik süresi 3 dakika
+			};
+
+			_context.PasswordResetCodes.Add(passwordResetCode);
+			await _context.SaveChangesAsync(cancellationToken);
+
+			await _emailService.SendEmailAsync(forgotPasswordRequestDto.Email, "Password Reset Code", $"Your password reset code is: {code}", expiryTime.AddHours(3));
+
+			return IdentityResult.Success;
+		}
+
+		public async Task<IdentityResult> ResetPasswordAsync(ResetPasswordDto resetPasswordDto, CancellationToken cancellationToken)
+		{
+			var user = await _userManager.FindByEmailAsync(resetPasswordDto.Email);
+			if (user == null)
+			{
+				return IdentityResult.Failed(new IdentityError { Description = "User not found." });
+			}
+
+			var storedCode = await _context.PasswordResetCodes.FirstOrDefaultAsync(c => c.Email == resetPasswordDto.Email && c.Code == resetPasswordDto.Code && c.ExpiryTime > DateTime.UtcNow, cancellationToken);
+			if (storedCode == null)
+			{
+				return IdentityResult.Failed(new IdentityError { Description = "Invalid or expired code." });
+			}
+
+			if (resetPasswordDto.NewPassword != resetPasswordDto.ConfirmPassword)
+			{
+				return IdentityResult.Failed(new IdentityError { Description = "Passwords do not match." });
+			}
+
+			var token = await _userManager.GeneratePasswordResetTokenAsync(user);
+			var result = await _userManager.ResetPasswordAsync(user, token, resetPasswordDto.NewPassword);
+
+			if (result.Succeeded)
+			{
+				_context.PasswordResetCodes.Remove(storedCode);
+				await _context.SaveChangesAsync(cancellationToken);
+			}
+
+			return result;
+		}
+
+		public async Task<bool> SendLoginCodeAsync(UsernameLoginRequestDto loginRequestDto, CancellationToken cancellationToken)
+		{
+			var user = await _userManager.FindByNameAsync(loginRequestDto.Username);
+			if (user == null)
+			{
+				return false;
+			}
+
+			var result = await _signInManager.CheckPasswordSignInAsync(user, loginRequestDto.Password, lockoutOnFailure: false);
+			if (!result.Succeeded)
+			{
+				return false;
+			}
+
+			var code = GenerateVerificationCode();
+			var expiryTime = DateTime.UtcNow.AddMinutes(3);
+			var verificationCode = new VerificationCode
+			{
+				Email = user.Email,
+				Code = code,
+				CreatedAt = DateTime.UtcNow,
+				ExpiryTime = expiryTime // Kodun geçerlilik süresi 3 dakika
+			};
+
+			_context.VerificationCodes.Add(verificationCode);
+			await _context.SaveChangesAsync(cancellationToken);
+
+			await _emailService.SendEmailAsync(user.Email, "Login Verification Code", $"Your login verification code is: {code}", expiryTime.AddHours(3));
+
+			return true;
+		}
+
+		public async Task<LoginResponseDto> VerifyLoginCodeAsync(VerifyLoginCodeDto verifyCodeDto, CancellationToken cancellationToken)
+		{
+			var user = await _userManager.FindByNameAsync(verifyCodeDto.Username);
+			if (user == null)
+			{
+				return null;
+			}
+
+			var result = await _signInManager.CheckPasswordSignInAsync(user, verifyCodeDto.Password, lockoutOnFailure: false);
+			if (!result.Succeeded)
+			{
+				return null;
+			}
+
+			var verificationCode = await _context.VerificationCodes
+				.FirstOrDefaultAsync(vc => vc.Email == user.Email && vc.Code == verifyCodeDto.Code && vc.ExpiryTime > DateTime.UtcNow, cancellationToken);
+
+			if (verificationCode == null)
+			{
+				return null;
+			}
+
+			var token = _jwtHelper.GenerateJwtToken(user);
+
+			var response = _mapper.Map<LoginResponseDto>(user);
+			response.Token = token;
+
+			_context.VerificationCodes.Remove(verificationCode);
+			await _context.SaveChangesAsync(cancellationToken);
+
+			return response;
+		}
+
+		private string GenerateVerificationCode()
+		{
+			var random = new Random();
+			return random.Next(100000, 999999).ToString();
 		}
 
 		public async Task<List<UserWithRolesDto>> GetAllUsersWithRolesAsync(CancellationToken cancellationToken)
@@ -118,106 +261,80 @@ namespace Identity.WebApi.Services
 			return userWithRolesList;
 		}
 
-		/// <summary>
-		/// Changes the password of a user.
-		/// </summary>
-		/// <param name="userId">The ID of the user whose password is to be changed.</param>
-		/// <param name="changePasswordDto">The DTO containing the current and new passwords.</param>
-		/// <param name="cancellationToken">Cancellation token.</param>
-		/// <returns>IdentityResult representing the result of the password change.</returns>
-		public async Task<IdentityResult> ChangePasswordAsync(string userId, ChangePasswordDto changePasswordDto, CancellationToken cancellationToken)
+		public async Task<IdentityResult> UpdateProfileAsync(string userId, UpdateProfileDto updateProfileDto, CancellationToken cancellationToken)
 		{
-			if (changePasswordDto.NewPassword != changePasswordDto.ConfirmNewPassword)
-			{
-				return IdentityResult.Failed(new IdentityError { Description = "New passwords do not match." });
-			}
-
 			var user = await _userManager.FindByIdAsync(userId);
 			if (user == null)
 			{
 				return IdentityResult.Failed(new IdentityError { Description = "User not found." });
 			}
 
-			var result = await _userManager.ChangePasswordAsync(user, changePasswordDto.CurrentPassword, changePasswordDto.NewPassword);
+			user.FirstName = updateProfileDto.FirstName;
+			user.LastName = updateProfileDto.LastName;
+			user.Address = updateProfileDto.Address;
+			user.PhoneNumber = updateProfileDto.PhoneNumber;
+
+			var result = await _userManager.UpdateAsync(user);
 
 			return result;
 		}
 
-		/// <summary>
-		/// Initiates the password reset process by sending a reset code to the user's email.
-		/// </summary>
-		/// <param name="forgotPasswordRequestDto">The DTO containing the user's email.</param>
-		/// <param name="cancellationToken">Cancellation token.</param>
-		/// <returns>IdentityResult representing the result of the password reset request.</returns>
-		public async Task<IdentityResult> ForgotPasswordAsync(ForgotPasswordRequestDto forgotPasswordRequestDto, CancellationToken cancellationToken)
+		public async Task<AuthenticationProperties> ExternalLoginAsync(string provider, string returnUrl = null)
 		{
-			var user = await _userManager.FindByEmailAsync(forgotPasswordRequestDto.Email);
-			if (user == null)
-			{
-				return IdentityResult.Failed(new IdentityError { Description = "User not found." });
-			}
-
-			var code = GenerateVerificationCode();
-			var passwordResetCode = new PasswordResetCode
-			{
-				Email = forgotPasswordRequestDto.Email,
-				Code = code,
-				CreatedAt = DateTime.UtcNow
-			};
-
-			_context.PasswordResetCodes.Add(passwordResetCode);
-			await _context.SaveChangesAsync(cancellationToken);
-
-			await _emailService.SendEmailAsync(forgotPasswordRequestDto.Email, "Password Reset Code", $"Your password reset code is: {code}");
-
-			return IdentityResult.Success;
+			var redirectUrl = returnUrl ?? "/external-login-callback";
+			var properties = _signInManager.ConfigureExternalAuthenticationProperties(provider, redirectUrl);
+			return properties;
 		}
 
-		/// <summary>
-		/// Resets the user's password using the provided reset code.
-		/// </summary>
-		/// <param name="resetPasswordDto">The DTO containing the email, reset code, and new password.</param>
-		/// <param name="cancellationToken">Cancellation token.</param>
-		/// <returns>IdentityResult representing the result of the password reset.</returns>
-		public async Task<IdentityResult> ResetPasswordAsync(ResetPasswordDto resetPasswordDto, CancellationToken cancellationToken)
+		public async Task<LoginResponseDto> ExternalLoginCallbackAsync()
 		{
-			var user = await _userManager.FindByEmailAsync(resetPasswordDto.Email);
-			if (user == null)
+			var info = await _signInManager.GetExternalLoginInfoAsync();
+			if (info == null)
 			{
-				return IdentityResult.Failed(new IdentityError { Description = "User not found." });
+				return null;
 			}
 
-			var storedCode = await _context.PasswordResetCodes.FirstOrDefaultAsync(c => c.Email == resetPasswordDto.Email && c.Code == resetPasswordDto.Code);
-			if (storedCode == null)
+			var signInResult = await _signInManager.ExternalLoginSignInAsync(info.LoginProvider, info.ProviderKey, isPersistent: false, bypassTwoFactor: true);
+			if (signInResult.Succeeded)
 			{
-				return IdentityResult.Failed(new IdentityError { Description = "Invalid code." });
+				var user = await _userManager.FindByLoginAsync(info.LoginProvider, info.ProviderKey);
+				if (user == null)
+				{
+					return null;
+				}
+
+				var token = _jwtHelper.GenerateJwtToken(user);
+				var response = _mapper.Map<LoginResponseDto>(user);
+				response.Token = token;
+
+				return response;
 			}
 
-			if (resetPasswordDto.NewPassword != resetPasswordDto.ConfirmPassword)
+			var email = info.Principal.FindFirstValue(ClaimTypes.Email);
+			if (email != null)
 			{
-				return IdentityResult.Failed(new IdentityError { Description = "Passwords do not match." });
+				var user = await _userManager.FindByEmailAsync(email);
+				if (user == null)
+				{
+					user = new AppUser
+					{
+						UserName = info.Principal.FindFirstValue(ClaimTypes.Email),
+						Email = info.Principal.FindFirstValue(ClaimTypes.Email)
+					};
+					await _userManager.CreateAsync(user);
+				}
+
+				await _userManager.AddLoginAsync(user, info);
+				await _signInManager.SignInAsync(user, isPersistent: false);
+
+				var token = _jwtHelper.GenerateJwtToken(user);
+				var response = _mapper.Map<LoginResponseDto>(user);
+				response.Token = token;
+
+				return response;
 			}
 
-			var token = await _userManager.GeneratePasswordResetTokenAsync(user);
-			var result = await _userManager.ResetPasswordAsync(user, token, resetPasswordDto.NewPassword);
-
-			if (result.Succeeded)
-			{
-				_context.PasswordResetCodes.Remove(storedCode);
-				await _context.SaveChangesAsync(cancellationToken);
-			}
-
-			return result;
-		}
-
-		/// <summary>
-		/// Generates a random verification code.
-		/// </summary>
-		/// <returns>A six-digit verification code as a string.</returns>
-		private string GenerateVerificationCode()
-		{
-			var random = new Random();
-			return random.Next(100000, 999999).ToString();
+			return null;
 		}
 	}
 }

@@ -25,6 +25,12 @@ namespace Identity.WebApi.Context
 		/// </summary>
 		public DbSet<PasswordResetCode> PasswordResetCodes { get; set; }
 
+
+		/// <summary>
+		/// Gets or sets the VerificationCodes DbSet.
+		/// </summary>
+		public DbSet<VerificationCode> VerificationCodes { get; set; }
+
 		/// <summary>
 		/// Configures the model that was discovered by convention from the entity types
 		/// exposed in <see cref="DbSet{TEntity}"/> properties on your derived context.
@@ -36,6 +42,9 @@ namespace Identity.WebApi.Context
 
 			// Apply configuration for AppUser entity
 			builder.ApplyConfiguration(new AppUserConfiguration());
+
+			// Apply configuration for VerificationCode entity
+			builder.ApplyConfiguration(new VerificationCodeConfiguration());
 		}
 	}
 }
