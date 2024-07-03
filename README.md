@@ -27,7 +27,7 @@ The Dream Identity Application is a comprehensive identity management system tha
 ### Installation
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/dream-identity-app.git
+   git clone https://github.com/ademceper/dream-identity-app.git
    ```
 2. Navigate to the project directory:
    ```bash
@@ -99,7 +99,7 @@ Dream Kimlik Uygulaması, kullanıcı kaydı, giriş, şifre yönetimi, e-posta 
 ### Kurulum
 1. Depoyu klonlayın:
    ```bash
-   git clone https://github.com/yourusername/dream-identity-app.git
+   git clone https://github.com/ademceper/dream-identity-app.git
    ```
 2. Proje dizinine gidin:
    ```bash
