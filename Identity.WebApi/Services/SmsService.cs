@@ -1,30 +1,35 @@
-﻿using System.Threading.Tasks;
-using Microsoft.Extensions.Configuration;
-using Twilio;
-using Twilio.Rest.Api.V2010.Account;
-using Twilio.Types;
+﻿using Vonage.Messaging;
+using Vonage.Request;
+using Vonage;
 
-namespace Identity.WebApi.Services
+public class SmsService : ISmsService
 {
-	public class SmsService : ISmsService
+	private readonly IConfiguration _configuration;
+
+	public SmsService(IConfiguration configuration)
 	{
-		private readonly IConfiguration _configuration;
+		_configuration = configuration;
+	}
 
-		public SmsService(IConfiguration configuration)
+	public async Task SendSmsAsync(string to, string message)
+	{
+		var apiKey = _configuration["Nexmo:ApiKey"];
+		var apiSecret = _configuration["Nexmo:ApiSecret"];
+		var from = _configuration["Nexmo:From"];
+
+		var credentials = Credentials.FromApiKeyAndSecret(apiKey, apiSecret);
+		var client = new VonageClient(credentials);
+
+		var response = await client.SmsClient.SendAnSmsAsync(new SendSmsRequest
 		{
-			_configuration = configuration;
-			TwilioClient.Init(_configuration["Twilio:AccountSID"], _configuration["Twilio:AuthToken"]);
-		}
+			To = to,
+			From = from,
+			Text = message
+		});
 
-		public async Task SendSmsAsync(string number, string message)
+		if (response.Messages[0].Status != "0")
 		{
-			var messageOptions = new CreateMessageOptions(new PhoneNumber(number))
-			{
-				From = new PhoneNumber(_configuration["Twilio:PhoneNumber"]),
-				Body = message
-			};
-
-			var msg = await MessageResource.CreateAsync(messageOptions);
+			throw new Exception($"Failed to send SMS: {response.Messages[0].ErrorText}");
 		}
 	}
 }

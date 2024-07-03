@@ -12,6 +12,7 @@ using Identity.WebApi.Context;
 using Microsoft.EntityFrameworkCore;
 using AutoMapper;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace Identity.WebApi.Services
 {
@@ -22,18 +23,22 @@ namespace Identity.WebApi.Services
 		private readonly IMapper _mapper;
 		private readonly IJwtHelper _jwtHelper;
 		private readonly IEmailService _emailService;
+		private readonly ISmsService _smsService;
 		private readonly AppDbContext _context;
 		private readonly IConfiguration _configuration;
+		private readonly ILogger<AuthService> _logger;
 
-		public AuthService(UserManager<AppUser> userManager, SignInManager<AppUser> signInManager, IMapper mapper, IJwtHelper jwtHelper, IEmailService emailService, AppDbContext context, IConfiguration configuration)
+		public AuthService(UserManager<AppUser> userManager, SignInManager<AppUser> signInManager, IMapper mapper, IJwtHelper jwtHelper, IEmailService emailService, ISmsService smsService, AppDbContext context, IConfiguration configuration, ILogger<AuthService> logger)
 		{
 			_userManager = userManager;
 			_signInManager = signInManager;
 			_mapper = mapper;
 			_jwtHelper = jwtHelper;
 			_emailService = emailService;
+			_smsService = smsService;
 			_context = context;
 			_configuration = configuration;
+			_logger = logger;
 		}
 
 		public async Task<IdentityResult> RegisterAsync(RegisterDto registerDto, CancellationToken cancellationToken)
@@ -41,12 +46,6 @@ namespace Identity.WebApi.Services
 			if (registerDto.Password != registerDto.ConfirmPassword)
 			{
 				return IdentityResult.Failed(new IdentityError { Description = "Passwords do not match." });
-			}
-
-			var existingUserByUsername = await _userManager.FindByNameAsync(registerDto.Username);
-			if (existingUserByUsername != null)
-			{
-				return IdentityResult.Failed(new IdentityError { Description = "Username is already taken." });
 			}
 
 			var existingUserByEmail = await _userManager.FindByEmailAsync(registerDto.Email);
@@ -64,27 +63,32 @@ namespace Identity.WebApi.Services
 
 		public async Task<LoginResponseDto> LoginAsync(LoginDto loginDto, CancellationToken cancellationToken)
 		{
-			var user = await _userManager.FindByNameAsync(loginDto.Username);
+			var user = await _userManager.FindByEmailAsync(loginDto.Email);
 			if (user == null)
 			{
-				return null;
+				_logger.LogWarning("User not found for email: {Email}", loginDto.Email);
+				throw new InvalidOperationException("Invalid email or password.");
 			}
 
 			if (await _userManager.IsLockedOutAsync(user))
 			{
+				_logger.LogWarning("User account is locked for email: {Email}", loginDto.Email);
 				throw new InvalidOperationException("User account is locked.");
 			}
 
 			var result = await _signInManager.PasswordSignInAsync(user.UserName, loginDto.Password, isPersistent: false, lockoutOnFailure: true);
 			if (!result.Succeeded)
 			{
-				return null;
+				_logger.LogWarning("Invalid email or password for email: {Email}", loginDto.Email);
+				throw new InvalidOperationException("Invalid email or password.");
 			}
 
-			var token = _jwtHelper.GenerateJwtToken(user);
+			var roles = await _userManager.GetRolesAsync(user);
+			var token = _jwtHelper.GenerateJwtToken(user, roles);
 
 			var response = _mapper.Map<LoginResponseDto>(user);
 			response.Token = token;
+			response.Roles = roles.ToList();
 
 			return response;
 		}
@@ -170,9 +174,75 @@ namespace Identity.WebApi.Services
 			return result;
 		}
 
-		public async Task<bool> SendLoginCodeAsync(UsernameLoginRequestDto loginRequestDto, CancellationToken cancellationToken)
+		public async Task<bool> SendSmsLoginCodeAsync(LoginDto loginRequestDto, CancellationToken cancellationToken)
 		{
-			var user = await _userManager.FindByNameAsync(loginRequestDto.Username);
+			var user = await _userManager.FindByEmailAsync(loginRequestDto.Email);
+			if (user == null)
+			{
+				return false;
+			}
+
+			var result = await _signInManager.CheckPasswordSignInAsync(user, loginRequestDto.Password, lockoutOnFailure: false);
+			if (!result.Succeeded)
+			{
+				return false;
+			}
+
+			var code = GenerateVerificationCode();
+			var expiryTime = DateTime.UtcNow.AddMinutes(3);
+			var verificationCode = new VerificationCode
+			{
+				Email = user.Email,
+				Code = code,
+				CreatedAt = DateTime.UtcNow,
+				ExpiryTime = expiryTime // Kodun geçerlilik süresi 3 dakika
+			};
+
+			_context.VerificationCodes.Add(verificationCode);
+			await _context.SaveChangesAsync(cancellationToken);
+
+			await _smsService.SendSmsAsync(user.PhoneNumber, $"Your login verification code is: {code}. It will expire at {expiryTime.AddHours(3):HH:mm} GMT.");
+
+			return true;
+		}
+
+		public async Task<LoginResponseDto> VerifySmsLoginCodeAsync(VerifyLoginCodeDto verifyCodeDto, CancellationToken cancellationToken)
+		{
+			var user = await _userManager.FindByEmailAsync(verifyCodeDto.Email);
+			if (user == null)
+			{
+				return null;
+			}
+
+			var result = await _signInManager.CheckPasswordSignInAsync(user, verifyCodeDto.Password, lockoutOnFailure: false);
+			if (!result.Succeeded)
+			{
+				return null;
+			}
+
+			var verificationCode = await _context.VerificationCodes
+				.FirstOrDefaultAsync(vc => vc.Email == user.Email && vc.Code == verifyCodeDto.Code && vc.ExpiryTime > DateTime.UtcNow, cancellationToken);
+
+			if (verificationCode == null)
+			{
+				return null;
+			}
+
+			var roles = await _userManager.GetRolesAsync(user);
+			var token = _jwtHelper.GenerateJwtToken(user, roles);
+
+			var response = _mapper.Map<LoginResponseDto>(user);
+			response.Token = token;
+
+			_context.VerificationCodes.Remove(verificationCode);
+			await _context.SaveChangesAsync(cancellationToken);
+
+			return response;
+		}
+
+		public async Task<bool> SendLoginCodeAsync(EmailLoginRequestDto loginRequestDto, CancellationToken cancellationToken)
+		{
+			var user = await _userManager.FindByEmailAsync(loginRequestDto.Email);
 			if (user == null)
 			{
 				return false;
@@ -204,7 +274,7 @@ namespace Identity.WebApi.Services
 
 		public async Task<LoginResponseDto> VerifyLoginCodeAsync(VerifyLoginCodeDto verifyCodeDto, CancellationToken cancellationToken)
 		{
-			var user = await _userManager.FindByNameAsync(verifyCodeDto.Username);
+			var user = await _userManager.FindByEmailAsync(verifyCodeDto.Email);
 			if (user == null)
 			{
 				return null;
@@ -224,10 +294,12 @@ namespace Identity.WebApi.Services
 				return null;
 			}
 
-			var token = _jwtHelper.GenerateJwtToken(user);
+			var roles = await _userManager.GetRolesAsync(user);
+			var token = _jwtHelper.GenerateJwtToken(user, roles);
 
 			var response = _mapper.Map<LoginResponseDto>(user);
 			response.Token = token;
+			response.Roles = roles.ToList();
 
 			_context.VerificationCodes.Remove(verificationCode);
 			await _context.SaveChangesAsync(cancellationToken);
@@ -303,9 +375,11 @@ namespace Identity.WebApi.Services
 					return null;
 				}
 
-				var token = _jwtHelper.GenerateJwtToken(user);
+				var roles = await _userManager.GetRolesAsync(user);
+				var token = _jwtHelper.GenerateJwtToken(user, roles);
 				var response = _mapper.Map<LoginResponseDto>(user);
 				response.Token = token;
+				response.Roles = roles.ToList();
 
 				return response;
 			}
@@ -327,9 +401,11 @@ namespace Identity.WebApi.Services
 				await _userManager.AddLoginAsync(user, info);
 				await _signInManager.SignInAsync(user, isPersistent: false);
 
-				var token = _jwtHelper.GenerateJwtToken(user);
+				var roles = await _userManager.GetRolesAsync(user);
+				var token = _jwtHelper.GenerateJwtToken(user, roles);
 				var response = _mapper.Map<LoginResponseDto>(user);
 				response.Token = token;
+				response.Roles = roles.ToList();
 
 				return response;
 			}

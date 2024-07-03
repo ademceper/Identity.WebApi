@@ -57,8 +57,32 @@ namespace Identity.WebApi.Controllers
 			}
 		}
 
-		[HttpPost]
-		public async Task<IActionResult> SendLoginCode([FromBody] UsernameLoginRequestDto loginRequestDto, CancellationToken cancellationToken)
+		[HttpPost("send-login-code")]
+		public async Task<IActionResult> SendSmsLoginCode([FromBody] LoginDto loginRequestDto, CancellationToken cancellationToken)
+		{
+			var result = await _authService.SendSmsLoginCodeAsync(loginRequestDto, cancellationToken);
+			if (!result)
+			{
+				return BadRequest("Invalid login attempt.");
+			}
+
+			return Ok("Verification code sent.");
+		}
+
+		[HttpPost("verify-login-code")]
+		public async Task<IActionResult> VerifySmsLoginCode([FromBody] VerifyLoginCodeDto verifyCodeDto, CancellationToken cancellationToken)
+		{
+			var result = await _authService.VerifySmsLoginCodeAsync(verifyCodeDto, cancellationToken);
+			if (result == null)
+			{
+				return BadRequest("Invalid verification code.");
+			}
+
+			return Ok(result);
+		}
+
+		[HttpPost("send-email-login-code")]
+		public async Task<IActionResult> SendLoginCode([FromBody] EmailLoginRequestDto loginRequestDto, CancellationToken cancellationToken)
 		{
 			var result = await _authService.SendLoginCodeAsync(loginRequestDto, cancellationToken);
 
@@ -70,7 +94,7 @@ namespace Identity.WebApi.Controllers
 			return Ok("Verification code sent.");
 		}
 
-		[HttpPost]
+		[HttpPost("verify-email-login-code")]
 		public async Task<IActionResult> VerifyLoginCode([FromBody] VerifyLoginCodeDto verifyCodeDto, CancellationToken cancellationToken)
 		{
 			var response = await _authService.VerifyLoginCodeAsync(verifyCodeDto, cancellationToken);

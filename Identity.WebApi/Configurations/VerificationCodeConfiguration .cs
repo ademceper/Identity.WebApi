@@ -1,7 +1,6 @@
 ﻿using Identity.WebApi.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using Twilio.TwiML.Voice;
 
 namespace Identity.WebApi.Configurations
 {
