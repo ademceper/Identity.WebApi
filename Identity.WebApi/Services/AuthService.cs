@@ -45,13 +45,13 @@ namespace Identity.WebApi.Services
 		{
 			if (registerDto.Password != registerDto.ConfirmPassword)
 			{
-				return IdentityResult.Failed(new IdentityError { Description = "Passwords do not match." });
+				return IdentityResult.Failed(new IdentityError { Description = "Parolalar eşleşmiyor." });
 			}
 
 			var existingUserByEmail = await _userManager.FindByEmailAsync(registerDto.Email);
 			if (existingUserByEmail != null)
 			{
-				return IdentityResult.Failed(new IdentityError { Description = "Email is already taken." });
+				return IdentityResult.Failed(new IdentityError { Description = "Email zaten kullanılıyor." });
 			}
 
 			var user = _mapper.Map<AppUser>(registerDto);
@@ -129,10 +129,11 @@ namespace Identity.WebApi.Services
 			var expiryTime = DateTime.UtcNow.AddMinutes(3);
 			var passwordResetCode = new PasswordResetCode
 			{
+				Id = Guid.NewGuid(),
 				Email = forgotPasswordRequestDto.Email,
 				Code = code,
 				CreatedAt = DateTime.UtcNow,
-				ExpiryTime = expiryTime // Kodun geçerlilik süresi 3 dakika
+				ExpiryTime = expiryTime
 			};
 
 			_context.PasswordResetCodes.Add(passwordResetCode);
@@ -233,6 +234,7 @@ namespace Identity.WebApi.Services
 
 			var response = _mapper.Map<LoginResponseDto>(user);
 			response.Token = token;
+			response.Roles = roles.ToList();
 
 			_context.VerificationCodes.Remove(verificationCode);
 			await _context.SaveChangesAsync(cancellationToken);
@@ -305,6 +307,17 @@ namespace Identity.WebApi.Services
 			await _context.SaveChangesAsync(cancellationToken);
 
 			return response;
+		}
+
+		public async Task<bool> VerifyResetPasswordCodeAsync(VerifyResetPasswordCodeDto verifyResetPasswordCodeDto, CancellationToken cancellationToken)
+		{
+			var storedCode = await _context.PasswordResetCodes.FirstOrDefaultAsync(c => c.Email == verifyResetPasswordCodeDto.Email && c.Code == verifyResetPasswordCodeDto.Code && c.ExpiryTime > DateTime.UtcNow, cancellationToken);
+			if (storedCode == null)
+			{
+				return false;
+			}
+
+			return true;
 		}
 
 		private string GenerateVerificationCode()

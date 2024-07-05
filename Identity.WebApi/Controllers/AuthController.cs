@@ -30,7 +30,7 @@ namespace Identity.WebApi.Controllers
 				return BadRequest(result.Errors);
 			}
 
-			return Ok("User registered successfully.");
+			return NoContent();
 		}
 
 		[HttpPost]
@@ -42,18 +42,18 @@ namespace Identity.WebApi.Controllers
 
 				if (response == null)
 				{
-					return Unauthorized("Invalid login attempt.");
+					return Unauthorized("Geçersiz giriş denemesi.");
 				}
 
 				return Ok(response);
 			}
 			catch (InvalidOperationException ex)
 			{
-				if (ex.Message == "User account is locked.")
+				if (ex.Message == "Kullanıcı hesabı kilitli.")
 				{
-					return Forbid("User account is locked.");
+					return Forbid("Kullanıcı hesabı kilitli.");
 				}
-				return StatusCode(500, "An error occurred during login.");
+				return StatusCode(500, "Giriş sırasında bir hata oluştu.");
 			}
 		}
 
@@ -63,10 +63,10 @@ namespace Identity.WebApi.Controllers
 			var result = await _authService.SendSmsLoginCodeAsync(loginRequestDto, cancellationToken);
 			if (!result)
 			{
-				return BadRequest("Invalid login attempt.");
+				return BadRequest("Geçersiz giriş denemesi.");
 			}
 
-			return Ok("Verification code sent.");
+			return Ok("Doğrulama kodu gönderildi.");
 		}
 
 		[HttpPost("verify-login-code")]
@@ -75,7 +75,7 @@ namespace Identity.WebApi.Controllers
 			var result = await _authService.VerifySmsLoginCodeAsync(verifyCodeDto, cancellationToken);
 			if (result == null)
 			{
-				return BadRequest("Invalid verification code.");
+				return BadRequest("Geçersiz doğrulama kodu.");
 			}
 
 			return Ok(result);
@@ -88,10 +88,10 @@ namespace Identity.WebApi.Controllers
 
 			if (!result)
 			{
-				return BadRequest("Invalid login attempt.");
+				return BadRequest("Geçersiz giriş denemesi.");
 			}
 
-			return Ok("Verification code sent.");
+			return Ok("Doğrulama kodu gönderildi.");
 		}
 
 		[HttpPost("verify-email-login-code")]
@@ -101,7 +101,7 @@ namespace Identity.WebApi.Controllers
 
 			if (response == null)
 			{
-				return Unauthorized("Invalid verification code.");
+				return Unauthorized("Geçersiz doğrulama kodu.");
 			}
 
 			return Ok(response);
@@ -114,7 +114,7 @@ namespace Identity.WebApi.Controllers
 			var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
 			if (userId == null)
 			{
-				return Unauthorized("User is not logged in.");
+				return Unauthorized("Kullanıcı giriş yapmamış.");
 			}
 
 			var result = await _authService.ChangePasswordAsync(userId, changePasswordDto, cancellationToken);
@@ -124,7 +124,7 @@ namespace Identity.WebApi.Controllers
 				return BadRequest(result.Errors);
 			}
 
-			return Ok("Password changed successfully.");
+			return Ok("Parola başarıyla değiştirildi.");
 		}
 
 		[HttpPost]
@@ -137,7 +137,20 @@ namespace Identity.WebApi.Controllers
 				return BadRequest(result.Errors);
 			}
 
-			return Ok("Password reset code sent.");
+			return NoContent();
+		}
+
+		[HttpPost]
+		public async Task<IActionResult> VerifyResetPasswordCode([FromBody] VerifyResetPasswordCodeDto verifyResetPasswordCodeDto, CancellationToken cancellationToken)
+		{
+			var result = await _authService.VerifyResetPasswordCodeAsync(verifyResetPasswordCodeDto, cancellationToken);
+
+			if (!result)
+			{
+				return BadRequest("Geçersiz veya süresi dolmuş şifre sıfırlama kodu.");
+			}
+
+			return NoContent();
 		}
 
 		[HttpPost]
@@ -150,7 +163,7 @@ namespace Identity.WebApi.Controllers
 				return BadRequest(result.Errors);
 			}
 
-			return Ok("Password reset successfully.");
+			return NoContent();
 		}
 
 		[HttpGet]
@@ -168,7 +181,7 @@ namespace Identity.WebApi.Controllers
 			var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
 			if (userId == null)
 			{
-				return Unauthorized("User is not logged in.");
+				return Unauthorized("Kullanıcı giriş yapmamış.");
 			}
 
 			var result = await _authService.UpdateProfileAsync(userId, updateProfileDto, cancellationToken);
@@ -177,7 +190,7 @@ namespace Identity.WebApi.Controllers
 				return BadRequest(result.Errors);
 			}
 
-			return Ok("Profile updated successfully.");
+			return Ok("Profil başarıyla güncellendi.");
 		}
 
 		[HttpGet]
@@ -195,7 +208,7 @@ namespace Identity.WebApi.Controllers
 			var response = await _authService.ExternalLoginCallbackAsync();
 			if (response == null)
 			{
-				return BadRequest("External login failed.");
+				return BadRequest("Harici giriş başarısız.");
 			}
 
 			return Ok(response);

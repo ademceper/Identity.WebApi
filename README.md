@@ -26,26 +26,26 @@ The Dream Identity Application is a comprehensive identity management system tha
 
 ### Installation
 1. Clone the repository:
-   ```bash
-   git clone https://github.com/ademceper/dream-identity-app.git
+   ``` 
+   git clone https://github.com/ademceper/Identity.WebApi.git
    ```
 2. Navigate to the project directory:
-   ```bash
-   cd dream-identity-app
+   ``` 
+   cd Identity.WebApi
    ```
 3. Restore the dependencies:
-   ```bash
+   ``` 
    dotnet restore
    ```
 4. Update the `appsettings.json` file with your configuration settings, including database connection strings and email/SMS service credentials.
 
 ### Running the Application
 1. Build the project:
-   ```bash
+   ``` 
    dotnet build
    ```
 2. Run the application:
-   ```bash
+   ``` 
    dotnet run
    ```
 3. The application will be available at `https://localhost:5001`.
@@ -98,26 +98,26 @@ Dream Kimlik Uygulaması, kullanıcı kaydı, giriş, şifre yönetimi, e-posta 
 
 ### Kurulum
 1. Depoyu klonlayın:
-   ```bash
-   git clone https://github.com/ademceper/dream-identity-app.git
+   ``` 
+   git clone https://github.com/ademceper/Identity.WebApi.git
    ```
 2. Proje dizinine gidin:
-   ```bash
-   cd dream-identity-app
+   ``` 
+   cd Identity.WebApi
    ```
 3. Bağımlılıkları yükleyin:
-   ```bash
+   ``` 
    dotnet restore
    ```
 4. `appsettings.json` dosyasını yapılandırma ayarları ile güncelleyin, veritabanı bağlantı dizeleri ve e-posta/SMS hizmeti kimlik bilgileri dahil.
 
 ### Uygulamayı Çalıştırma
 1. Projeyi derleyin:
-   ```bash
+   ``` 
    dotnet build
    ```
 2. Uygulamayı çalıştırın:
-   ```bash
+   ``` 
    dotnet run
    ```
 3. Uygulama `https://localhost:5001` adresinde kullanılabilir olacaktır.

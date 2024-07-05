@@ -21,5 +21,6 @@ namespace Identity.WebApi.Services
 		Task<IdentityResult> UpdateProfileAsync(string userId, UpdateProfileDto updateProfileDto, CancellationToken cancellationToken);
 		Task<AuthenticationProperties> ExternalLoginAsync(string provider, string returnUrl = null);
 		Task<LoginResponseDto> ExternalLoginCallbackAsync();
+		Task<bool> VerifyResetPasswordCodeAsync(VerifyResetPasswordCodeDto verifyResetPasswordCodeDto, CancellationToken cancellationToken);
 	}
 }

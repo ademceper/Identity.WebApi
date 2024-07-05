@@ -74,7 +74,8 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // Configure Identity
 builder.Services.AddIdentity<AppUser, IdentityRole<Guid>>()
 	.AddEntityFrameworkStores<AppDbContext>()
-	.AddDefaultTokenProviders();
+	.AddDefaultTokenProviders()
+	.AddErrorDescriber<CustomIdentityErrorDescriber>();
 
 // Configure AutoMapper
 builder.Services.AddAutoMapper(typeof(Program));
