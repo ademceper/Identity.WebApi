@@ -149,18 +149,24 @@ namespace Identity.WebApi.Services
 			var user = await _userManager.FindByEmailAsync(resetPasswordDto.Email);
 			if (user == null)
 			{
-				return IdentityResult.Failed(new IdentityError { Description = "User not found." });
+				return IdentityResult.Failed(new IdentityError { Description = "Kullanıcı bulunamadı." });
 			}
 
 			var storedCode = await _context.PasswordResetCodes.FirstOrDefaultAsync(c => c.Email == resetPasswordDto.Email && c.Code == resetPasswordDto.Code && c.ExpiryTime > DateTime.UtcNow, cancellationToken);
 			if (storedCode == null)
 			{
-				return IdentityResult.Failed(new IdentityError { Description = "Invalid or expired code." });
+				return IdentityResult.Failed(new IdentityError { Description = "Geçersiz veya süresi dolmuş kod." });
 			}
 
 			if (resetPasswordDto.NewPassword != resetPasswordDto.ConfirmPassword)
 			{
-				return IdentityResult.Failed(new IdentityError { Description = "Passwords do not match." });
+				return IdentityResult.Failed(new IdentityError { Description = "Şifreler eşleşmiyor." });
+			}
+
+			var isPasswordSameAsOld = await _userManager.CheckPasswordAsync(user, resetPasswordDto.NewPassword);
+			if (isPasswordSameAsOld)
+			{
+				return IdentityResult.Failed(new IdentityError { Description = "Yeni şifre eski şifre ile aynı olamaz." });
 			}
 
 			var token = await _userManager.GeneratePasswordResetTokenAsync(user);
@@ -174,6 +180,7 @@ namespace Identity.WebApi.Services
 
 			return result;
 		}
+
 
 		public async Task<bool> SendSmsLoginCodeAsync(LoginDto loginRequestDto, CancellationToken cancellationToken)
 		{
